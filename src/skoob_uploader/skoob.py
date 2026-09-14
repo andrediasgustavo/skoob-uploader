@@ -3,10 +3,11 @@ import unicodedata
 from math import ceil
 from dataclasses import dataclass
 
-from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import BrowserContext, Locator, Page, TimeoutError as PlaywrightTimeoutError
 
 from .models import Book, ProcessResult
-from .parser import STATUS_LABELS, normalize_volume_labels
+from .parser import normalize_volume_labels
+from .statuses import status_label
 
 
 def _normalized(value: str) -> str:
@@ -55,19 +56,38 @@ class SkoobUploader:
             await search.wait_for(timeout=300_000)
         return page
 
+    async def _open_first_result(self, page: Page, book: Book) -> tuple[str, str]:
+        search = page.get_by_placeholder("Busque por título, autor, editora, ISBN...")
+        await search.fill(normalize_volume_labels(book.title))
+        results = page.locator('a[href^="/book/"]')
+        await page.wait_for_timeout(300)
+        await results.first.wait_for(state="visible", timeout=self.search_timeout_ms)
+        result_link = results.first
+        result_title = await result_link.locator("h2").inner_text()
+        await result_link.click()
+        heading = page.locator("h1").first
+        await heading.wait_for(state="visible", timeout=self.timeout_ms)
+        return (await heading.inner_text()).strip(), result_title
+
+    async def _status_button(self, page: Page) -> Locator:
+        button = page.get_by_role(
+            "button",
+            name=re.compile(r"^(Adicionar|Lido|Lendo|Quero ler|Relendo|Abandonei)$"),
+            exact=True,
+        )
+        await button.wait_for(state="visible", timeout=self.timeout_ms)
+        return button
+
+    async def _set_status(self, page: Page, desired_label: str) -> None:
+        await page.get_by_role("menuitemradio", name=desired_label, exact=True).click()
+        await page.get_by_role("button", name=desired_label, exact=True).wait_for(
+            state="visible", timeout=self.timeout_ms
+        )
+
     async def process(self, book: Book) -> ProcessResult:
         page = await self.page()
-        search = page.get_by_placeholder("Busque por título, autor, editora, ISBN...")
         try:
-            await search.fill(normalize_volume_labels(book.title))
-            results = page.locator('a[href^="/book/"]')
-            await page.wait_for_timeout(300)
-            await results.first.wait_for(state="visible", timeout=self.search_timeout_ms)
-            result_link = results.first
-            result_title = await result_link.locator("h2").inner_text()
-            await result_link.click()
-            await page.locator("h1").first.wait_for(state="visible", timeout=self.timeout_ms)
-            found_title = (await page.locator("h1").first.inner_text()).strip()
+            found_title, result_title = await self._open_first_result(page, book)
             if not _title_matches(book.title, found_title):
                 return ProcessResult(
                     title=book.title,
@@ -79,13 +99,8 @@ class SkoobUploader:
                     ignored_status_tag=book.ignored_status_tag,
                 )
 
-            desired_label = STATUS_LABELS.get(book.desired_status, STATUS_LABELS["lido"])
-            status_button = page.get_by_role(
-                "button",
-                name=re.compile(r"^(Adicionar|Lido|Lendo|Quero ler|Relendo|Abandonei)$"),
-                exact=True,
-            )
-            await status_button.wait_for(state="visible", timeout=self.timeout_ms)
+            desired_label = status_label(book.desired_status)
+            status_button = await self._status_button(page)
             current_status = (await status_button.inner_text()).strip()
             if current_status == desired_label:
                 return ProcessResult(
@@ -99,10 +114,7 @@ class SkoobUploader:
                 )
 
             await status_button.click()
-            await page.get_by_role("menuitemradio", name=desired_label, exact=True).click()
-            await page.get_by_role("button", name=desired_label, exact=True).wait_for(
-                state="visible", timeout=self.timeout_ms
-            )
+            await self._set_status(page, desired_label)
             return ProcessResult(
                 title=book.title,
                 status="atualizado",

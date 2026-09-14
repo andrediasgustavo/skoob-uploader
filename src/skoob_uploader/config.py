@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +9,8 @@ from typing import Any
 @dataclass(frozen=True)
 class AppConfig:
     pdf: Path | None = None
-    profile_dir: Path = Path(".skoob-profile")
-    report: Path = Path("reports/skoob-results.csv")
+    profile_dir: Path = field(default_factory=lambda: app_data_dir() / "profile")
+    report: Path = field(default_factory=lambda: app_data_dir() / "reports/skoob-results.csv")
     browser: str = "chrome"
     limit: int = 0
     headless: bool = False
@@ -31,11 +31,17 @@ def config_path() -> Path:
 
 
 def default_config() -> AppConfig:
-    data_dir = app_data_dir()
-    return AppConfig(
-        profile_dir=data_dir / "profile",
-        report=data_dir / "reports/skoob-results.csv",
-    )
+    return AppConfig()
+
+
+def validate_config(config: AppConfig) -> AppConfig:
+    if config.browser not in {"chrome", "chromium"}:
+        raise ValueError("Navegador inválido. Use 'chrome' ou 'chromium'.")
+    if config.limit < 0:
+        raise ValueError("--limit não pode ser negativo.")
+    if not isinstance(config.profile_dir, Path) or not isinstance(config.report, Path):
+        raise ValueError("Os caminhos de perfil e relatório devem ser válidos.")
+    return config
 
 
 def _as_config_value(name: str, value: Any) -> Any:
@@ -57,7 +63,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise ValueError(f"Configuração inválida em {target}: esperava um objeto JSON.")
     known = {field.name for field in fields(AppConfig)}
     values = {name: _as_config_value(name, raw[name]) for name in known if name in raw}
-    return AppConfig(**asdict(config) | values)
+    return validate_config(AppConfig(**asdict(config) | values))
 
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:

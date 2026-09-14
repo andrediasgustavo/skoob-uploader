@@ -2,9 +2,9 @@ import re
 import unicodedata
 from pathlib import Path
 
-from pypdf import PdfReader
-
 from .models import Book
+from .pdf import extract_text
+from .statuses import DEFAULT_STATUS, resolve_status_tag
 
 MONTHS = {
     "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
@@ -13,13 +13,6 @@ MONTHS = {
 FORMAT_RE = re.compile(r"^(livro|quadrinho)$", re.IGNORECASE)
 VOLUME_RE = re.compile(r"\bvol(?:ume)?\.?\s*(\d+)\b", re.IGNORECASE)
 STATUS_TAG_RE = re.compile(r"\[([^\]]+)\]\s*$")
-STATUS_LABELS = {
-    "lido": "Lido",
-    "lendo": "Lendo",
-    "quero ler": "Quero ler",
-    "relendo": "Relendo",
-    "abandonei": "Abandonei",
-}
 
 
 def normalize_text(value: str) -> str:
@@ -37,24 +30,12 @@ def _status_from_source(source: str) -> tuple[str, str, str]:
     if not match:
         return source, "lido", ""
     tag = re.sub(r"\s+", " ", match.group(1)).strip()
-    normalized_tag = normalize_text(tag)
+    desired_status, ignored_status_tag = resolve_status_tag(tag)
     clean_source = re.sub(r"\s+-\s*$", "", source[: match.start()]).rstrip()
-    return clean_source, normalized_tag if normalized_tag in STATUS_LABELS else "lido", "" if normalized_tag in STATUS_LABELS else tag
+    return clean_source, desired_status, ignored_status_tag
 
 
-def extract_pdf_text(pdf_path: Path) -> str:
-    reader = PdfReader(str(pdf_path))
-    pages: list[str] = []
-    for page in reader.pages:
-        rows: dict[float, list[str]] = {}
-
-        def collect_row(text: str, cm: list[float], _tm: list[float], _font: object, _size: float) -> None:
-            if text.strip():
-                rows.setdefault(round(cm[5], 1), []).append(text)
-
-        page.extract_text(visitor_text=collect_row)
-        pages.append("\n".join(re.sub(r"\s+", " ", " ".join(parts)).strip() for parts in rows.values()))
-    return "\n".join(pages)
+extract_pdf_text = extract_text
 
 
 def _is_header(line: str) -> bool:
