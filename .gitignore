@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Application data and generated reports
+.skoob-profile/
+reports/*
+!reports/.gitkeep
+log/*
+!log/.gitkeep
+data/*.pdf
+!data/.gitkeep
+
+# Local configuration
+.env
+.env.*
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
