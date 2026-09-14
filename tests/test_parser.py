@@ -57,6 +57,24 @@ def test_normalize_volume_labels_uses_hash_number() -> None:
     assert normalize_volume_labels("Blame! vol. 10") == "Blame! #10"
 
 
+def test_parse_text_uses_status_tag_when_present() -> None:
+    books = parse_text(
+        "● Duna - Frank Herbert - livro - [lendo]\n"
+        "● O Hobbit - J. R. R. Tolkien - livro"
+    )
+
+    assert books[0].desired_status == "lendo"
+    assert books[0].ignored_status_tag == ""
+    assert books[1].desired_status == "lido"
+
+
+def test_parse_text_falls_back_to_lido_for_unknown_status_tag() -> None:
+    books = parse_text("● Duna - Frank Herbert - livro - [em pausa]")
+
+    assert books[0].desired_status == "lido"
+    assert books[0].ignored_status_tag == "em pausa"
+
+
 def test_validate_pdf_rejects_image_only_pdf(tmp_path, monkeypatch) -> None:
     pdf_path = tmp_path / "scan.pdf"
     pdf_path.write_bytes(b"pdf")

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
 
 from .models import Book, ProcessResult
-from .parser import normalize_volume_labels
+from .parser import STATUS_LABELS, normalize_volume_labels
 
 
 def _normalized(value: str) -> str:
@@ -75,20 +75,58 @@ class SkoobUploader:
                     url=page.url,
                     found_title=found_title,
                     reason=f"Primeiro resultado: {result_title}",
+                    desired_status=book.desired_status,
+                    ignored_status_tag=book.ignored_status_tag,
                 )
 
-            status_button = page.get_by_role("button", name=re.compile(r"^(Adicionar|Lido)$"), exact=True)
+            desired_label = STATUS_LABELS.get(book.desired_status, STATUS_LABELS["lido"])
+            status_button = page.get_by_role(
+                "button",
+                name=re.compile(r"^(Adicionar|Lido|Lendo|Quero ler|Relendo|Abandonei)$"),
+                exact=True,
+            )
             await status_button.wait_for(state="visible", timeout=self.timeout_ms)
-            if (await status_button.inner_text()).strip() == "Lido":
-                return ProcessResult(title=book.title, status="ja_lido", url=page.url, found_title=found_title)
+            current_status = (await status_button.inner_text()).strip()
+            if current_status == desired_label:
+                return ProcessResult(
+                    title=book.title,
+                    status=f"ja_{book.desired_status}",
+                    url=page.url,
+                    found_title=found_title,
+                    desired_status=book.desired_status,
+                    current_status=current_status,
+                    ignored_status_tag=book.ignored_status_tag,
+                )
 
             await status_button.click()
-            await page.get_by_role("menuitemradio", name="Lido", exact=True).click()
-            await page.get_by_role("button", name="Lido", exact=True).wait_for(
+            await page.get_by_role("menuitemradio", name=desired_label, exact=True).click()
+            await page.get_by_role("button", name=desired_label, exact=True).wait_for(
                 state="visible", timeout=self.timeout_ms
             )
-            return ProcessResult(title=book.title, status="lido", url=page.url, found_title=found_title)
+            return ProcessResult(
+                title=book.title,
+                status="atualizado",
+                url=page.url,
+                found_title=found_title,
+                desired_status=book.desired_status,
+                current_status=current_status,
+                ignored_status_tag=book.ignored_status_tag,
+            )
         except PlaywrightTimeoutError as error:
-            return ProcessResult(title=book.title, status="nao_encontrado", url=page.url, reason=str(error))
+            return ProcessResult(
+                title=book.title,
+                status="nao_encontrado",
+                url=page.url,
+                reason=str(error),
+                desired_status=book.desired_status,
+                ignored_status_tag=book.ignored_status_tag,
+            )
         except Exception as error:
-            return ProcessResult(title=book.title, status="erro", url=page.url, reason=str(error))
+            return ProcessResult(
+                title=book.title,
+                status="erro",
+                url=page.url,
+                reason=str(error),
+                desired_status=book.desired_status,
+                ignored_status_tag=book.ignored_status_tag,
+            )

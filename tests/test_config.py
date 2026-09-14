@@ -2,7 +2,7 @@ import json
 import sys
 
 from skoob_uploader.config import AppConfig, default_config, load_config, save_config
-from skoob_uploader.main import _prepare_browser, _resolved_config, build_parser
+from skoob_uploader.main import _prepare_browser, _resolved_config, _should_wait_for_login, build_parser
 
 
 def test_default_config_uses_user_data_directories() -> None:
@@ -99,3 +99,28 @@ def test_prepare_browser_rejects_missing_chrome(monkeypatch) -> None:
         assert "Google Chrome não foi encontrado" in str(error)
     else:
         raise AssertionError("missing Chrome was accepted")
+
+
+def test_login_wait_is_required_for_a_new_profile(tmp_path) -> None:
+    args = build_parser().parse_args([])
+
+    assert _should_wait_for_login(args, tmp_path / ".login-confirmed") is True
+
+
+def test_login_wait_is_skipped_after_confirmation(tmp_path) -> None:
+    marker = tmp_path / ".login-confirmed"
+    marker.touch()
+    args = build_parser().parse_args([])
+
+    assert _should_wait_for_login(args, marker) is False
+
+
+def test_login_wait_can_be_forced_or_disabled(tmp_path) -> None:
+    marker = tmp_path / ".login-confirmed"
+    marker.touch()
+
+    force_args = build_parser().parse_args(["--login-wait"])
+    skip_args = build_parser().parse_args(["--no-login-wait"])
+
+    assert _should_wait_for_login(force_args, marker) is True
+    assert _should_wait_for_login(skip_args, tmp_path / "missing-marker") is False

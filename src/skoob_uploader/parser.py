@@ -12,6 +12,14 @@ MONTHS = {
 }
 FORMAT_RE = re.compile(r"^(livro|quadrinho)$", re.IGNORECASE)
 VOLUME_RE = re.compile(r"\bvol(?:ume)?\.?\s*(\d+)\b", re.IGNORECASE)
+STATUS_TAG_RE = re.compile(r"\[([^\]]+)\]\s*$")
+STATUS_LABELS = {
+    "lido": "Lido",
+    "lendo": "Lendo",
+    "quero ler": "Quero ler",
+    "relendo": "Relendo",
+    "abandonei": "Abandonei",
+}
 
 
 def normalize_text(value: str) -> str:
@@ -22,6 +30,16 @@ def normalize_text(value: str) -> str:
 
 def normalize_volume_labels(value: str) -> str:
     return VOLUME_RE.sub(r"#\1", value)
+
+
+def _status_from_source(source: str) -> tuple[str, str, str]:
+    match = STATUS_TAG_RE.search(source)
+    if not match:
+        return source, "lido", ""
+    tag = re.sub(r"\s+", " ", match.group(1)).strip()
+    normalized_tag = normalize_text(tag)
+    clean_source = re.sub(r"\s+-\s*$", "", source[: match.start()]).rstrip()
+    return clean_source, normalized_tag if normalized_tag in STATUS_LABELS else "lido", "" if normalized_tag in STATUS_LABELS else tag
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
@@ -68,13 +86,24 @@ def parse_text(text: str) -> list[Book]:
     entries = _join_entries(text)
     if not entries:
         entries = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
-        return [
-            Book(title=normalize_volume_labels(entry), author="", format="", source=entry)
-            for entry in entries
-        ]
+        books = []
+        for source in entries:
+            clean_source, desired_status, ignored_status_tag = _status_from_source(source)
+            books.append(
+                Book(
+                    title=normalize_volume_labels(clean_source),
+                    author="",
+                    format="",
+                    source=source,
+                    desired_status=desired_status,
+                    ignored_status_tag=ignored_status_tag,
+                )
+            )
+        return books
 
     for source in entries:
-        parts = [part.strip() for part in re.split(r"\s+-\s+", source) if part.strip()]
+        clean_source, desired_status, ignored_status_tag = _status_from_source(source)
+        parts = [part.strip() for part in re.split(r"\s+-\s+", clean_source) if part.strip()]
         format_index = next(
             (index for index, part in enumerate(parts) if FORMAT_RE.fullmatch(part)),
             None,
@@ -83,7 +112,16 @@ def parse_text(text: str) -> list[Book]:
             continue
         title = normalize_volume_labels(" - ".join(parts[: format_index - 1]))
         author = parts[format_index - 1]
-        books.append(Book(title=title, author=author, format=parts[format_index], source=source))
+        books.append(
+            Book(
+                title=title,
+                author=author,
+                format=parts[format_index],
+                source=source,
+                desired_status=desired_status,
+                ignored_status_tag=ignored_status_tag,
+            )
+        )
     return books
 
 

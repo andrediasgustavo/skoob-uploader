@@ -7,6 +7,8 @@ class Book:
     author: str
     format: str
     source: str
+    desired_status: str = "lido"
+    ignored_status_tag: str = ""
 
 
 @dataclass(frozen=True)
@@ -16,3 +18,6 @@ class ProcessResult:
     url: str = ""
     found_title: str = ""
     reason: str = ""
+    desired_status: str = "lido"
+    current_status: str = ""
+    ignored_status_tag: str = ""

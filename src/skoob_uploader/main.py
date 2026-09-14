@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--browser",
         choices=("chromium", "chrome"),
         default=None,
-        help="Navegador a abrir quando não usar --cdp-url (padrão: chromium).",
+        help="Navegador a abrir quando não usar --cdp-url (padrão: chrome).",
     )
     parser.add_argument(
         "--cdp-url",
@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-login-wait",
         action="store_true",
         help="Não aguarda a confirmação manual de login antes do lote.",
+    )
+    parser.add_argument(
+        "--login-wait",
+        action="store_true",
+        help="Força a confirmação manual de login, mesmo com uma sessão já configurada.",
     )
     return parser
 
@@ -103,6 +108,10 @@ def _prepare_browser(browser: str) -> None:
     print("Google Chrome encontrado.", flush=True)
 
 
+def _should_wait_for_login(args: argparse.Namespace, login_marker: Path) -> bool:
+    return args.login_wait or (not args.no_login_wait and not login_marker.exists())
+
+
 def setup() -> None:
     path = config_path()
     current = load_config(path)
@@ -150,6 +159,7 @@ async def run(args: argparse.Namespace) -> None:
 
     config.profile_dir.mkdir(parents=True, exist_ok=True)
     config.report.parent.mkdir(parents=True, exist_ok=True)
+    login_marker = config.profile_dir / ".login-confirmed"
     async with async_playwright() as playwright:
         owns_context = args.cdp_url is None
         if args.cdp_url:
@@ -176,7 +186,16 @@ async def run(args: argparse.Namespace) -> None:
             context = await playwright.chromium.launch_persistent_context(**launch_options)
         uploader = SkoobUploader(context)
         page = await uploader.open_home()
-        if not args.no_login_wait:
+        if "accounts.google.com" in page.url:
+            if owns_context:
+                await context.close()
+            raise SystemExit(
+                "O Google bloqueou o login neste navegador automatizado. "
+                "Feche o Chrome e inicie uma janela dedicada com CDP, depois execute "
+                "novamente usando --cdp-url http://127.0.0.1:9222. "
+                "Veja a seção 'Login com Chrome via CDP' no README."
+            )
+        if _should_wait_for_login(args, login_marker):
             if config.headless:
                 if owns_context:
                     await context.close()
@@ -187,6 +206,7 @@ async def run(args: argparse.Namespace) -> None:
                 flush=True,
             )
             await asyncio.to_thread(input)
+            login_marker.touch()
 
         results = []
         for index, book in enumerate(books, start=1):
@@ -197,7 +217,19 @@ async def run(args: argparse.Namespace) -> None:
             page = await uploader.open_home()
 
         with config.report.open("w", newline="", encoding="utf-8") as report_file:
-            writer = csv.DictWriter(report_file, fieldnames=["title", "status", "url", "found_title", "reason"])
+            writer = csv.DictWriter(
+                report_file,
+                fieldnames=[
+                    "title",
+                    "status",
+                    "url",
+                    "found_title",
+                    "reason",
+                    "desired_status",
+                    "current_status",
+                    "ignored_status_tag",
+                ],
+            )
             writer.writeheader()
             writer.writerows(result.__dict__ for result in results)
         if owns_context:

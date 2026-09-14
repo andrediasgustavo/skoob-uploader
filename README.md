@@ -54,9 +54,11 @@ O assistente verifica o navegador escolhido antes de salvar a configuração. Pa
 
 O assistente não solicita nem armazena a senha do Skoob. O perfil persistente do navegador também fica fora do projeto, evitando misturar sessão e arquivos gerados com o código.
 
-O navegador padrão é o Chromium, instalado automaticamente pelo Playwright. O Google Chrome continua disponível como opção avançada, caso já esteja instalado.
+O navegador padrão é o Google Chrome instalado no computador. Mesmo assim, o Google pode bloquear o login quando o Chrome é iniciado pelo Playwright. Para contas Google, o caminho recomendado é iniciar o Chrome manualmente via CDP, conforme explicado abaixo. O Chromium continua disponível como alternativa, mas também pode apresentar bloqueios em logins do Google.
 
-Se o Chrome não estiver instalado, escolha `chromium` durante o setup ou instale o Google Chrome antes de tentar novamente. Se a instalação automática do Chromium falhar, execute manualmente:
+O procedimento completo para usar o Chrome via CDP está na seção **Primeira execução**. Esse é o caminho recomendado caso o Google bloqueie o login.
+
+Se o Chrome não estiver instalado, escolha `chromium` durante o setup. Se a instalação automática do Chromium falhar, execute manualmente:
 
 ```bash
 python -m playwright install chromium
@@ -106,17 +108,39 @@ Lista estruturada, com marcador, título, autor e tipo:
 ● Akira - Katsuhiro Otomo - quadrinho
 ```
 
+### Status por livro
+
+Por padrão, todo livro é marcado como `Lido`. Para aplicar outro status, adicione uma tag entre colchetes no final da entrada:
+
+```text
+● O Hobbit - J. R. R. Tolkien - livro
+● Duna - Frank Herbert - livro - [lendo]
+● Akira - Katsuhiro Otomo - quadrinho - [quero ler]
+● Fundação - Isaac Asimov - livro - [abandonei]
+```
+
+Os status reconhecidos são:
+
+- `[lido]`
+- `[lendo]`
+- `[quero ler]`
+- `[relendo]`
+- `[abandonei]`
+
+Uma tag ausente ou desconhecida usa o padrão `Lido` e não interrompe o lote. Tags desconhecidas são registradas no relatório como ignoradas.
+
 Também são aceitos os marcadores `●`, `•` e `*`. No formato estruturado, o tipo deve ser `livro` ou `quadrinho`. O parser reconhece cabeçalhos de ano/mês, entradas que continuam na linha seguinte e volumes como `Vol 1`.
 
 O formato estruturado é o mais confiável. Tabelas complexas, PDFs com texto desordenado ou layouts muito diferentes podem exigir ajustes no arquivo antes da execução.
 
 ## Primeira execução
 
-O navegador abre visível por padrão. O script aguarda uma confirmação antes de começar: faça login manualmente no Skoob, deixe a página pronta e pressione `Enter` no terminal. A sessão fica em um diretório persistente de dados do usuário; o script não recebe nem armazena senha.
+### Caminho recomendado: Chrome via CDP
 
-Por padrão, a automação abre o Chrome instalado com um perfil dedicado. Isso não reutiliza automaticamente o perfil pessoal do Chrome, porque o Chrome bloqueia perfis que já estão abertos.
+Use este caminho quando o login passa pelo Google ou quando aparecer a mensagem `Esse navegador ou app pode não ser seguro`.
 
-O uso comum não exige CDP. Essa opção é avançada e só é necessária para reutilizar uma sessão de Chrome iniciada separadamente. Feche todas as janelas do Chrome e inicie uma instância dedicada com CDP. Usar um perfil separado evita que uma instância normal já aberta ignore a flag ou bloqueie o perfil:
+1. Feche todas as janelas do Chrome.
+2. Inicie o Chrome com um perfil separado:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -124,13 +148,32 @@ O uso comum não exige CDP. Essa opção é avançada e só é necessária para 
 	--user-data-dir="$HOME/.skoob-chrome-profile"
 ```
 
-Depois execute o script conectado a essa janela:
+3. Faça login no Skoob nessa janela.
+4. Em outro terminal, execute:
 
 ```bash
-PYTHONPATH=src python -m skoob_uploader.main data/livros.pdf --limit 1 --cdp-url http://127.0.0.1:9222
+skoob-uploader run data/livros.pdf --limit 1 --cdp-url http://127.0.0.1:9222
 ```
 
-Assim, faça login nessa janela do Chrome antes de pressionar `Enter`. Não use o mesmo perfil em duas instâncias simultâneas.
+Na primeira execução, o programa pedirá confirmação no terminal depois que a página estiver pronta. Pressione `Enter`. A senha nunca é armazenada pelo programa.
+
+### Caminho alternativo: navegador iniciado pelo programa
+
+Também é possível executar sem `--cdp-url`:
+
+```bash
+skoob-uploader run data/livros.pdf --limit 1
+```
+
+Nesse modo, o programa abre um perfil separado próprio. Faça login nesse navegador na primeira execução. Esse perfil não é o seu perfil pessoal do Chrome e o Google pode bloquear o login por detectar automação. Se isso acontecer, use o caminho via CDP acima.
+
+Se a sessão expirar ou você quiser trocar de conta, use `--login-wait` para forçar uma nova confirmação:
+
+```bash
+skoob-uploader run data/livros.pdf --limit 1 --login-wait
+```
+
+Use `--no-login-wait` somente em execução automatizada ou sem interface.
 
 Comece com um livro:
 
@@ -146,7 +189,7 @@ Por padrão, o script processa todos os livros encontrados no PDF. Para executar
 PYTHONPATH=src python -m skoob_uploader.main data/livros.pdf --limit 0
 ```
 
-O resultado é salvo em `reports/skoob-results.csv`. Títulos que não tiverem resultado ou cuja página não começar com o título pesquisado são registrados sem serem marcados.
+O resultado é salvo em `reports/skoob-results.csv`. Além do resultado, o CSV registra o status desejado, o status atual encontrado e qualquer tag desconhecida que tenha sido ignorada. Títulos que não tiverem resultado ou cuja página não começar com o título pesquisado são registrados sem serem marcados.
 
 ## Testes
 

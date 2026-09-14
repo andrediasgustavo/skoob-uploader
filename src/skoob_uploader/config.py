@@ -11,7 +11,7 @@ class AppConfig:
     pdf: Path | None = None
     profile_dir: Path = Path(".skoob-profile")
     report: Path = Path("reports/skoob-results.csv")
-    browser: str = "chromium"
+    browser: str = "chrome"
     limit: int = 0
     headless: bool = False
 
