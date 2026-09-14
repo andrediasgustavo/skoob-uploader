@@ -1,8 +1,10 @@
 import json
 import sys
 
-from skoob_uploader.config import AppConfig, default_config, load_config, save_config
-from skoob_uploader.main import _prepare_browser, _resolved_config, _should_wait_for_login, build_parser
+from skoob_uploader.browser import prepare_browser
+from skoob_uploader.config import AppConfig, default_config, load_config, save_config, validate_config
+from skoob_uploader.main import _resolved_config, build_parser
+from skoob_uploader.session import should_wait_for_login
 
 
 def test_default_config_uses_user_data_directories() -> None:
@@ -11,6 +13,13 @@ def test_default_config_uses_user_data_directories() -> None:
     assert config.profile_dir.name == "profile"
     assert config.report.parts[-2:] == ("reports", "skoob-results.csv")
     assert ".skoob-profile" not in str(config.profile_dir)
+
+
+def test_app_config_defaults_do_not_depend_on_current_directory() -> None:
+    config = AppConfig()
+
+    assert config.profile_dir == default_config().profile_dir
+    assert config.report == default_config().report
 
 
 def test_config_round_trip_preserves_paths(tmp_path) -> None:
@@ -40,6 +49,22 @@ def test_invalid_config_is_rejected(tmp_path) -> None:
         assert "objeto JSON" in str(error)
     else:
         raise AssertionError("invalid configuration was accepted")
+
+
+def test_config_rejects_invalid_browser_and_limit() -> None:
+    try:
+        validate_config(AppConfig(browser="safari"))
+    except ValueError as error:
+        assert "Navegador inválido" in str(error)
+    else:
+        raise AssertionError("invalid browser was accepted")
+
+    try:
+        validate_config(AppConfig(limit=-1))
+    except ValueError as error:
+        assert "não pode ser negativo" in str(error)
+    else:
+        raise AssertionError("negative limit was accepted")
 
 
 def test_cli_arguments_override_saved_config(tmp_path) -> None:
@@ -81,9 +106,9 @@ def test_prepare_browser_installs_playwright_chromium(monkeypatch) -> None:
     def fake_run(command, check):
         calls.append((command, check))
 
-    monkeypatch.setattr("skoob_uploader.main.subprocess.run", fake_run)
+    monkeypatch.setattr("skoob_uploader.browser.subprocess.run", fake_run)
 
-    _prepare_browser("chromium")
+    prepare_browser("chromium")
 
     assert calls == [
         ([sys.executable, "-m", "playwright", "install", "chromium"], True)
@@ -91,10 +116,10 @@ def test_prepare_browser_installs_playwright_chromium(monkeypatch) -> None:
 
 
 def test_prepare_browser_rejects_missing_chrome(monkeypatch) -> None:
-    monkeypatch.setattr("skoob_uploader.main._chrome_executable", lambda: None)
+    monkeypatch.setattr("skoob_uploader.browser.chrome_executable", lambda: None)
 
     try:
-        _prepare_browser("chrome")
+        prepare_browser("chrome")
     except SystemExit as error:
         assert "Google Chrome não foi encontrado" in str(error)
     else:
@@ -104,7 +129,7 @@ def test_prepare_browser_rejects_missing_chrome(monkeypatch) -> None:
 def test_login_wait_is_required_for_a_new_profile(tmp_path) -> None:
     args = build_parser().parse_args([])
 
-    assert _should_wait_for_login(args, tmp_path / ".login-confirmed") is True
+    assert should_wait_for_login(args, tmp_path / ".login-confirmed") is True
 
 
 def test_login_wait_is_skipped_after_confirmation(tmp_path) -> None:
@@ -112,7 +137,7 @@ def test_login_wait_is_skipped_after_confirmation(tmp_path) -> None:
     marker.touch()
     args = build_parser().parse_args([])
 
-    assert _should_wait_for_login(args, marker) is False
+    assert should_wait_for_login(args, marker) is False
 
 
 def test_login_wait_can_be_forced_or_disabled(tmp_path) -> None:
@@ -122,5 +147,5 @@ def test_login_wait_can_be_forced_or_disabled(tmp_path) -> None:
     force_args = build_parser().parse_args(["--login-wait"])
     skip_args = build_parser().parse_args(["--no-login-wait"])
 
-    assert _should_wait_for_login(force_args, marker) is True
-    assert _should_wait_for_login(skip_args, tmp_path / "missing-marker") is False
+    assert should_wait_for_login(force_args, marker) is True
+    assert should_wait_for_login(skip_args, tmp_path / "missing-marker") is False

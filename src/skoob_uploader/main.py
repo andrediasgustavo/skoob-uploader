@@ -1,17 +1,16 @@
 import argparse
 import asyncio
-import csv
-import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from .config import AppConfig, config_path, load_config, save_config
+from .application import process_batch
+from .browser import create_context, login_marker
+from .config import AppConfig, load_config, validate_config
+from .onboarding import setup as setup_onboarding
 from .parser import validate_pdf
+from .session import confirm_login
 from .skoob import SkoobUploader
 
 
@@ -65,89 +64,13 @@ def _resolved_config(args: argparse.Namespace) -> AppConfig:
         "limit": args.limit if args.limit is not None else config.limit,
         "headless": args.headless or config.headless,
     }
-    return AppConfig(**values)
-
-
-def _chrome_executable() -> Path | None:
-    candidates = [
-        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        Path(os.environ["PROGRAMFILES"]) / "Google/Chrome/Application/chrome.exe"
-        if os.environ.get("PROGRAMFILES")
-        else Path(),
-        Path(os.environ["LOCALAPPDATA"]) / "Google/Chrome/Application/chrome.exe"
-        if os.environ.get("LOCALAPPDATA")
-        else Path(),
-    ]
-    for command in ("google-chrome", "google-chrome-stable", "chrome"):
-        executable = shutil.which(command)
-        if executable:
-            return Path(executable)
-    return next((candidate for candidate in candidates if candidate.is_file()), None)
-
-
-def _prepare_browser(browser: str) -> None:
-    if browser == "chromium":
-        print("Verificando o Chromium do Playwright...", flush=True)
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                check=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise SystemExit(
-                "Não foi possível instalar o Chromium do Playwright. "
-                "Tente executar manualmente: python -m playwright install chromium"
-            ) from error
-        return
-    if _chrome_executable() is None:
-        raise SystemExit(
-            "O Google Chrome não foi encontrado. Instale o Chrome ou execute o setup "
-            "novamente escolhendo 'chromium'."
-        )
-    print("Google Chrome encontrado.", flush=True)
-
-
-def _should_wait_for_login(args: argparse.Namespace, login_marker: Path) -> bool:
-    return args.login_wait or (not args.no_login_wait and not login_marker.exists())
-
-
-def setup() -> None:
-    path = config_path()
-    current = load_config(path)
-    print("Configuração do Skoob Uploader")
-    pdf_input = input(f"Caminho do PDF [{current.pdf or 'não definido'}]: ").strip()
-    browser_input = input(f"Navegador (chrome/chromium) [{current.browser}]: ").strip().lower()
-    if browser_input and browser_input not in {"chrome", "chromium"}:
-        raise SystemExit("Navegador inválido. Use 'chrome' ou 'chromium'.")
-    pdf = Path(pdf_input).expanduser() if pdf_input else current.pdf
-    if pdf is not None:
-        try:
-            books = validate_pdf(pdf)
-        except ValueError as error:
-            raise SystemExit(f"PDF inválido: {error}") from error
-        print(f"PDF validado: {len(books)} livro(s) encontrado(s).")
-    config = AppConfig(
-        pdf=pdf,
-        profile_dir=current.profile_dir,
-        report=current.report,
-        browser=browser_input or current.browser,
-        limit=current.limit,
-        headless=current.headless,
-    )
-    _prepare_browser(config.browser)
-    saved_path = save_config(config, path)
-    print(f"Configuração salva em: {saved_path}")
-    print(f"Perfil do navegador: {config.profile_dir}")
-    print("Agora execute: skoob-uploader [caminho-do-pdf]")
+    return validate_config(AppConfig(**values))
 
 
 async def run(args: argparse.Namespace) -> None:
     config = _resolved_config(args)
     if config.pdf is None:
         raise SystemExit("Informe um PDF ou execute 'skoob-uploader setup' primeiro.")
-    if config.limit < 0:
-        raise SystemExit("--limit não pode ser negativo.")
     try:
         books = validate_pdf(config.pdf)
     except ValueError as error:
@@ -159,31 +82,9 @@ async def run(args: argparse.Namespace) -> None:
 
     config.profile_dir.mkdir(parents=True, exist_ok=True)
     config.report.parent.mkdir(parents=True, exist_ok=True)
-    login_marker = config.profile_dir / ".login-confirmed"
+    session_marker = login_marker(config.profile_dir)
     async with async_playwright() as playwright:
-        owns_context = args.cdp_url is None
-        if args.cdp_url:
-            try:
-                browser = await playwright.chromium.connect_over_cdp(args.cdp_url)
-            except PlaywrightError as error:
-                if "ECONNREFUSED" in str(error):
-                    raise SystemExit(
-                        f"Não foi possível conectar ao Chrome em {args.cdp_url}.\n"
-                        "Inicie o Chrome com --remote-debugging-port=9222 e tente novamente."
-                    ) from error
-                raise
-            if not browser.contexts:
-                raise SystemExit("O Chrome conectado por CDP não possui um contexto de navegador.")
-            context = browser.contexts[0]
-        else:
-            launch_options = {
-                "user_data_dir": str(config.profile_dir),
-                "headless": config.headless,
-                "viewport": {"width": 1440, "height": 1000},
-            }
-            if config.browser == "chrome":
-                launch_options["channel"] = "chrome"
-            context = await playwright.chromium.launch_persistent_context(**launch_options)
+        context, owns_context = await create_context(playwright, config, args.cdp_url)
         uploader = SkoobUploader(context)
         page = await uploader.open_home()
         if "accounts.google.com" in page.url:
@@ -195,50 +96,16 @@ async def run(args: argparse.Namespace) -> None:
                 "novamente usando --cdp-url http://127.0.0.1:9222. "
                 "Veja a seção 'Login com Chrome via CDP' no README."
             )
-        if _should_wait_for_login(args, login_marker):
-            if config.headless:
-                if owns_context:
-                    await context.close()
-                raise SystemExit("Remova --headless para fazer login e confirmar a sessão manualmente.")
-            print(
-                "\nNavegador aberto. Faça login no Skoob e deixe a página pronta. "
-                "Quando terminar, pressione Enter neste terminal para iniciar o lote.",
-                flush=True,
-            )
-            await asyncio.to_thread(input)
-            login_marker.touch()
+        await confirm_login(args, session_marker, context, owns_context)
 
-        results = []
-        for index, book in enumerate(books, start=1):
-            result = await uploader.process(book)
-            results.append(result)
-            print(f"[{index}/{len(books)}] {book.title}: {result.status}")
-            await asyncio.sleep(0.8)
-            page = await uploader.open_home()
-
-        with config.report.open("w", newline="", encoding="utf-8") as report_file:
-            writer = csv.DictWriter(
-                report_file,
-                fieldnames=[
-                    "title",
-                    "status",
-                    "url",
-                    "found_title",
-                    "reason",
-                    "desired_status",
-                    "current_status",
-                    "ignored_status_tag",
-                ],
-            )
-            writer.writeheader()
-            writer.writerows(result.__dict__ for result in results)
+        await process_batch(uploader, books, config.report)
         if owns_context:
             await context.close()
 
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
-        setup()
+        setup_onboarding()
         return
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         sys.argv.pop(1)

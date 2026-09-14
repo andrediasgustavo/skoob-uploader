@@ -12,6 +12,12 @@ python3 -m pipx ensurepath
 pipx install .
 ```
 
+O comando acima deve ser executado dentro de uma cópia local do projeto. Para instalar diretamente do GitHub:
+
+```bash
+pipx install git+https://github.com/andrediasgustavo/skoob-uploader.git
+```
+
 No Windows, use `py -m pip install --user pipx` e `py -m pipx ensurepath`.
 
 ### Comando não encontrado após a instalação
@@ -34,7 +40,7 @@ No Windows, feche e abra o PowerShell ou o Prompt de Comando. Confirme a instala
 skoob-uploader --help
 ```
 
-Para desenvolvimento, mantenha a instalação manual abaixo:
+Para desenvolvimento, mantenha a instalação manual abaixo. Nesse modo, os comandos com `PYTHONPATH=src` usados mais adiante devem ser executados a partir da pasta do projeto:
 
 ```bash
 python3 -m venv .venv
