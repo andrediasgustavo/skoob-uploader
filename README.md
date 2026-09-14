@@ -148,10 +148,28 @@ Use este caminho quando o login passa pelo Google ou quando aparecer a mensagem 
 1. Feche todas as janelas do Chrome.
 2. Inicie o Chrome com um perfil separado:
 
+No macOS:
+
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 	--remote-debugging-port=9222 \
 	--user-data-dir="$HOME/.skoob-chrome-profile"
+```
+
+No Linux:
+
+```bash
+google-chrome \
+	--remote-debugging-port=9222 \
+	--user-data-dir="$HOME/.skoob-chrome-profile"
+```
+
+No Windows PowerShell:
+
+```powershell
+& "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" `
+    --remote-debugging-port=9222 `
+    --user-data-dir="$env:USERPROFILE\.skoob-chrome-profile"
 ```
 
 3. Faça login no Skoob nessa janela.
